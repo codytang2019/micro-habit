@@ -82,22 +82,27 @@ export async function fetchTodayEntries(
 
 export async function fetchTotalReps(userId: string): Promise<number> {
   const supabase = await createClient();
-  const { data, error } = await supabase
+  // 累積次數以「打卡日數」為單位：同一件小事一日之內完成幾多次（bonus_count）
+  // 都只計 1 次，唔應該因為當日超額完成而谷大次數。
+  const { count, error } = await supabase
     .from("habit_logs")
-    .select("bonus_count")
+    .select("id", { count: "exact", head: true })
     .eq("user_id", userId);
 
-  if (error || !data) return 0;
-  return data.reduce((sum, r) => sum + 1 + (r.bonus_count ?? 0), 0);
+  if (error) return 0;
+  return count ?? 0;
 }
 
 export async function fetchRepsByHabit(
   userId: string,
 ): Promise<Map<string, number>> {
   const supabase = await createClient();
+  // 同上：每條 habit_logs 記錄代表「嗰件小事嗰一日有打卡」，
+  // 唔理當日 bonus_count 係幾多，一日淨計 1 次，避免超額完成谷大
+  // 「已成為習慣」24 次門檻。
   const { data, error } = await supabase
     .from("habit_logs")
-    .select("habit_id, bonus_count")
+    .select("habit_id")
     .eq("user_id", userId);
 
   const map = new Map<string, number>();
@@ -105,7 +110,7 @@ export async function fetchRepsByHabit(
 
   data.forEach((log) => {
     const prev = map.get(log.habit_id) ?? 0;
-    map.set(log.habit_id, prev + 1 + (log.bonus_count ?? 0));
+    map.set(log.habit_id, prev + 1);
   });
   return map;
 }
