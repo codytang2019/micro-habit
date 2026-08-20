@@ -73,7 +73,7 @@ src/
 - **`.env.local.txt` 事件**：早期不小心將含 Supabase anon key 嘅檔案（`.env.local.txt`，副檔名唔喺 `.gitignore` 排除範圍）commit 咗上公開 repo。已提醒用戶用 `git rm` 清走。**風險評估：低** —— 洩漏嘅係 Supabase publishable/anon key，呢類 key 本身設計就係俾前端公開用，真正防護喺 RLS policies，唔靠隱藏呢條 key。
 - **Next.js 版本**：原本用 `15.0.3`，Vercel deploy 時偵測到 CVE-2025-66478（已知安全漏洞）直接封鎖部署，已升級去 `^15.4.7`（patched）。**之後升級 Next.js 記得留意有冇新 CVE 封鎖。**
 - **Vercel 「Production Overrides」陷阱**：Project Settings 入面雖然 Framework Preset 已經係 Next.js，但 project 曾經有一個獨立嘅 production-only override（Framework: "Other"，Output Directory: "public"），源於最初嗰個非 git deployment 遺留嘅設定，一度令 build 成功但 deploy 報 "No Output Directory named public" 錯誤。已修正。
-- **swipe-to-reveal 未完整實現**：prototype 原本有 swipe 手勢顯示編輯/刪除按鈕，Next.js 版本簡化成一個 `⋯` 按鈕 toggle 顯示（因為 web 版 swipe 手勢複雜度高，優先做返功能齊全）。
+- ~~**swipe-to-reveal 未完整實現**~~：已於 2026-08-20 實裝（見下面 pain points 記錄），`HabitCard.tsx` 而家用 Pointer Events 做真・swipe 手勢，`⋯` 按鈕已移除。
 - **`fetchMonthRecords` 嘅歷史習慣數限制**：月曆判斷某日係咪「全部完成」，係攞「現有」習慣總數嚟比較，冇追蹤某日當時實際有幾多個習慣存在（例如你舊時有 3 個習慣，而家得返 2 個，舊日子嘅「全部完成」判斷會用而家嘅 2 個嚟計，可能唔準確）。日後如果要精確歷史統計，需要另外儲存「某日有效習慣快照」。
 
 ## 部署流程備忘
@@ -90,7 +90,7 @@ src/
 ## 下一步可以做嘅嘢
 
 - [ ] 手機 UI 微調（現有設計主要跟 prototype 嘅 phone-frame 尺寸，響應式表現未特別測試過闊 viewport）
-- [ ] 完善 swipe 手勢（如果想更貼近原 prototype 體驗）
+- [x] ~~完善 swipe 手勢~~ —— 已完成，見 2026-08-20 pain points 記錄。
 - [ ] 加返「音效／震動回饋」（原 prototype 有蓋章音效，Web Audio API + navigator.vibrate，Next.js 版未移植）
 - [ ] 加通知／提醒功能（原 prototype UI 有 notif-banner 樣式但未接實際推播邏輯）
 - [ ] 歷史月曆準確度優化（見上面「已知問題」）
@@ -157,29 +157,77 @@ export async function fetchRepsByHabit(userId: string): Promise<Map<string, numb
 
 建議下一步：先問用戶「係邊部裝置 / 邊個瀏覽器 / 幾耐冇開會被踢」，再去 Supabase Dashboard 睇返 session 過期設定，先好埋手改碼。
 
+**相關但獨立嘅 bug，已修好（2026-08-20）：本機測試 Google 登入要撳兩次先得。**
+
+根源同上面「keep auto login」呢個 pain point 唔同，係一個具體、已經搵到嘅設定錯配問題：`.env.local` 嘅 `NEXT_PUBLIC_SITE_URL` 設咗做 production 網址（`https://micro-habit-prototype.vercel.app`），但 `src/app/login/google-button.tsx` 撳「用 Google 帳號登入」嗰陣，`redirectTo` 一律用返 `NEXT_PUBLIC_SITE_URL`（如果有設）。結果本機開 `localhost:3000` 測試，Google 授權完會俾人拉去 **production** 個 `/auth/callback`，本機瀏覽器收唔到 session cookie，第一次撳好似冇反應；第二次撳（或者 reload）先「好似得咗」，其實係搭正之前殘留低嘅狀態，唔係真係修復咗。
+
+**已修法：**
+
+- `src/app/login/google-button.tsx` —— 呢個 button 淨係喺瀏覽器行，改用 `window.location.origin`（用戶而家實際嗰個 domain，本機／preview／production 都啱）,唔再理 `NEXT_PUBLIC_SITE_URL`。
+- `src/app/login/actions.ts` 嘅 `signUpWithEmail`（email 確認連結用嘅 redirect）—— 呢個係 server action，冇 `window`，改用新增嘅 `getRequestOrigin()` helper，靠 `next/headers` 嘅 `host`/`x-forwarded-host` 攞返呢個 request 實際嘅 origin，一樣唔再靠 `NEXT_PUBLIC_SITE_URL`（得喺攞唔到 header 嗰種極端情況先 fallback 用返佢）。
+
+**注意：** `.env.local` 嘅 `NEXT_PUBLIC_SITE_URL` 而家已經冇任何程式碼會讀（`auth/callback/route.ts` 一直都係用返 request 嘅 `origin`，冇呢個問題）。可以考慮之後直接喺 `.env.local` 刪走呢個變數，減少之後再撞到同一種「本機/production 設定唔夾」嘅陷阱；但因為佢而家已經冇被讀，唔刪都唔會再出事。
+
 ### 4. 新增第一個小事嗰刻先要求登入 —— 之前應該俾用戶 preview 成個 app
 
-**狀態：確認係缺口，而家完全冇 preview / guest 模式。**
+**狀態：已實裝（2026-08-19）。**
 
-現時流程好硬：
+改咗嘅檔案：
 
-- `src/app/page.tsx`（首頁）一見到冇登入用戶，即刻 `redirect("/login")`，冇畀機會睇任何內容。
-- `src/middleware.ts` + `src/lib/supabase/middleware.ts` 將 `/app` 成個路徑都鎖死，未登入即刻彈去 `/login`。
+- `src/lib/supabase/middleware.ts` —— 移除咗「未登入即刻 redirect 去 `/login`」嘅邏輯，而家淨係負責 refresh session cookie，唔再鎖 `/app`。
+- `src/app/page.tsx` —— 首頁唔再判斷登入狀態，一律 `redirect("/app")`。
+- `src/app/app/page.tsx` —— 未登入用戶唔再被踢，而係用新增嘅 `getGuestPreviewData()`（`src/lib/habits/guest-preview.ts`）畀一組靜態 demo 資料（4 件示範小事，攞自 `PRESETS`），連 `HabitTracker` 一個新 `isGuest` prop。
+- `src/lib/habits/guest-preview.ts`（新檔案）—— 純前端假資料，唔碰 database，包括 demo habits／今日打卡狀態／累積次數／單一個月嘅集章月曆記錄。
+- `src/app/app/components/HabitTracker.tsx` —— 加咗 `isGuest` prop 同 `requireLogin()`（redirect 去 `/login`，帶友善提示文字）。Guest 模式下：
+  - 主頁上方多一格「你而家睇緊預覽模式，資料唔會儲存」提示 + 登入連結。
+  - 右上角「登出」變返做「登入」。
+  - 「新增你的小事」（`openAdd`）、編輯（`openEdit`）、「清除所有資料」（`handleReset`）、換月曆月份（`handleNavigateMonth`，因為 `/app/api/month` 要登入）呢幾個動作撳落會轉去登入頁。
+  - 底部 nav bar 多一粒「登入」（跟返用戶提供嘅參考圖，做獨立一格放喺 bar 度，唔係成頁擋晒）。
+- `src/app/app/components/HabitCard.tsx` —— 加咗 `isGuest` / `onRequireLogin` prop，蓋章打卡（`handleStamp`）、超額滑桿放手（`handleBonusCommit`）、刪除（`handleDelete`）呢幾個寫資料動作喺 guest 模式會轉去登入頁；滑桿本身仲可以拖動睇下效果（`handleBonusChange` 淨係更新本地 state），但唔會真係儲存。
+- `src/app/login/actions.ts` 嘅 `signOut()` —— 本機測試時發現登出之後仲係彈返去 `/login`，同「/app 而家支援 guest preview」呢個新行為唔一致（用戶會以為登出即刻被逼去登入畫面）。已改成登出後 `redirect("/app")`，登出即刻見返主頁 preview，唔會再彈登入頁。
+- `src/app/login/page.tsx` —— 本機測試後用戶要求登入頁重新設計，跟返一張參考圖，整個換咗：
+  - 頂部橙色 header 加返「‹ 主頁」button（`Link href="/app"`），撳到會返去 preview，唔會再冇路可返。
+  - 「歡迎！」歡迎文案 + 副標題鼓勵登入。
+  - **淨係保留 Google 登入一個按鈕**（`GoogleSignInButton`），移除咗 email/password 表單同 sign in / sign up 呢兩粒 button（`signInWithEmail`/`signUpWithEmail` 呢兩個 server action 喺 `actions.ts` 保留咗底層邏輯冇刪，淨係而家個頁面冇用到）。
+  - 「或者」分隔線之後加多一個「唔登入（繼續睇 preview）」button，一樣係 `Link href="/app"`，等用戶明確可以揀唔登入。
+  - 底部加返一段「點解要登入？」提示文字（跨裝置同步、安全儲存雲端、唔怕資料唔見、登入先有完整功能），用返 icon + 文字列表。
+  - 視覺風格改用返成個 app 嘅紙質印章色系（`bg-paper`、`bg-stamp` 橙色 header），唔再係之前純白 neutral 風格。
+  - `google-button.tsx` 順便配合改咗樣式（跟返紙質卡片風格）同文字（改做中文「用 Google 帳號登入」）。
 
-即係而家用戶未登入連主頁、月曆、已成為習慣呢啲畫面嘅樣都睇唔到，同用戶想要嘅「先畀我睇下個 app 大概點，撳到某啲動作（加第一件小事 / 打卡）先叫我登入」完全相反。
+**未完成 / 之後可以再打磨：**
 
-**建議做法（唔改 DB schema，主要係前端 + middleware 邏輯）：**
+- Demo 資料而家淨係得一個靜態月份（今日嗰個月），guest 撳「換月」會直接彈去登入，冇畀佢睇歷史月份嘅 demo 樣式 —— 如果想 preview 更完整，可以擴充 `guest-preview.ts` 畀多幾個月嘅假資料。
+- Email/password 登入而家喺 UI 層面完全隱藏咗（用戶明確要求淨係得 Google 按鈕），但底層 `signInWithEmail`/`signUpWithEmail` action 冇刪，如果之後想加返，`login/page.tsx` 需要再加返表單。
+- `/app/dashboard` 舊連結冇改動，行為不變。
+- 呢個改動未跑過實際 `next build`（呢個 cloud session 冇成個 repo 嘅 `node_modules`，只做咗 brace/paren balance check 同人手 review type 用法），落地前記得喺你電腦跑一次 `npm run build` 或者靠 Vercel preview deployment 確認冇 type error。
 
-1. `middleware.ts` 嘅 `protectedPaths` 由成個 `/app` 改做只鎖寫入類 API（或者乾脆唔喺 middleware 層鎖 `/app`，改為喺頁面/元件層判斷）。
-2. `/app` 頁面（`src/app/app/page.tsx`）容許冇登入用戶進入，用一組**假資料 / demo habits**（可以攞 `PRESETS` 嗰 4 個分類範本現成內容）取代 `fetchHabits` 等 server 查詢結果，等用戶可以撳日曆／主頁／已成為習慣三個 tab 隨便睇。
-3. 主要互動入口收緊做「登入閘」：撳「新增你的小事」（`openAdd`）、撳蓋章打卡（`handleStamp`）、拖超額滑桿呢幾個會寫資料嘅動作，先檢查有冇登入，冇就彈去 `/login`（可以用 query param 話返用戶「登入之後幫你留低呢個習慣」）。
-4. UI 層面：喺底部 nav bar 度加多一個「登入」入口（類似用戶提供嘅參考圖，登入做獨立一粒放喺 bar 度，唔係淨係擋成個頁面），等用戶隨時知道自己仲未登入、想登入隨時撳到。
+### 5. 蓋章打卡有 3-4 秒 delay 先反應
 
-呢個改動牽涉 middleware、`/app/page.tsx`（由 server component 判斷登入與否揀真資料定 demo 資料）、`HabitTracker.tsx`（加登入態 prop，控制邊啲動作要彈登入閘）幾個檔案，建議獨立一個 PR/session 處理，唔好同 pain point 2 嘅計分邏輯改動一齊落。
+**狀態：已修好（2026-08-20）。**
+
+`HabitCard.tsx` 之前撳蓋章之後，要等成個 `checkInHabit` server action 完成 → `revalidatePath("/app")` 重新 fetch 成頁 7 條 Supabase query（`fetchHabits`/`fetchCategories`/`fetchTodayEntries`/`fetchTotalReps`/`fetchRepsByHabit`/`fetchFirstUseDate`/`fetchMonthRecords`）→ RSC payload 傳返嚟 → 先會見到蓋章變咗做已完成。呢個完整 round trip 就係 3-4 秒 delay 嘅來源。
+
+**修法：** 加咗樂觀更新（optimistic UI）。撳蓋章嗰刻本地 state（`optimisticDone`）即刻變 true，畫面即刻反應；server action 背景繼續行，成功就冇事，如果真係失敗（`checkInHabit` 拋錯）先跌返做未完成，等用戶知道要重試。加咗一個 `useEffect` 監聽 `entry` prop 變化，等 server 真係 revalidate 完之後本地 state 會同步返做準（例如喺第二部裝置打咗卡之後呢邊 refresh 到）。
+
+### 6. Swipe left 顯示編輯/刪除按鈕，取代右上角「⋯」按鈕
+
+**狀態：已實裝（2026-08-20）。**
+
+`HabitCard.tsx` 之前用一粒「⋯」button toggle 顯示編輯/刪除（PROGRESS.md 舊版「已知問題」提過呢個係簡化版，原 prototype 有真・swipe 手勢）。而家改用 Pointer Events（`onPointerDown`/`onPointerMove`/`onPointerUp`/`onPointerCancel`）做真正嘅左滑手勢：
+
+- 用 `setPointerCapture` 等隻手指拖出張卡範圍之外都仲追蹤到。
+- 開嘅門檻要拖過 `REVEAL_WIDTH` 一半（等用戶唔會唔小心碰到就開咗），關嘅門檻淨係拖返一啲少少就得（等用戶容易保持顯示）。
+- 拖緊嗰陣即時跟手（`transition: none`），放手先做 0.2s ease-out snap 動畫。
+- 已經 swipe 開住嗰陣，撳返張卡本身（唔係撳蓋章/滑桿）會即刻收返去，唔使特登再 swipe 一次先蓋到章。
+- 「⋯」button 已經完全移除。
+
+呢個用 Pointer Events（唔係分開寫 touch/mouse handler）係因為佢喺觸控裝置同滑鼠都work，唔使重複邏輯。
 
 ### 優先順序建議
 
 1. ~~**Pain point 2**（超額計分 bug）~~ —— ✅ 已修好，見上面。
-2. **Pain point 4**（preview-before-login）—— 產品體驗缺口，牽涉範圍中等，建議獨立一輪處理。
-3. **Pain point 3**（auto-login）—— 需要用戶提供多啲資訊（裝置/瀏覽器/情境）先可以判斷係咪真係要改碼，定係 Supabase 設定問題。
-4. **Pain point 1**（carry forward）—— 睇落已經係現有行為，等用戶提供具體「消失咗」嘅例子先再跟進，暫時唔需要改碼。
+2. ~~**Pain point 4**（preview-before-login）~~ —— ✅ 已實裝，見上面，落地前記得本機 build 一次。
+3. ~~**Pain point 5**（蓋章 delay）~~ —— ✅ 已修好。
+4. ~~**Pain point 6**（swipe-to-reveal）~~ —— ✅ 已實裝。
+5. **Pain point 3**（auto-login）—— 需要用戶提供多啲資訊（裝置/瀏覽器/情境）先可以判斷係咪真係要改碼，定係 Supabase 設定問題；Google 登入要撳兩次嗰個獨立 bug 已經搵到根源同修好。
+6. **Pain point 1**（carry forward）—— 睇落已經係現有行為，等用戶提供具體「消失咗」嘅例子先再跟進，暫時唔需要改碼。

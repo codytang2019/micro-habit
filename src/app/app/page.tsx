@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import {
   fetchCategories,
@@ -9,6 +8,7 @@ import {
   fetchTodayEntries,
   fetchTotalReps,
 } from "@/lib/habits/queries";
+import { getGuestPreviewData } from "@/lib/habits/guest-preview";
 import { HabitTracker } from "./components/HabitTracker";
 import { signOut } from "../login/actions";
 
@@ -18,13 +18,34 @@ export default async function AppPage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    redirect("/login");
-  }
-
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth();
+
+  // 未登入：唔再彈去 /login，改為畀一組 demo 資料，等用戶可以先睇晒
+  // 主頁／日曆／已成為習慣三個畫面點樣運作，撳到會寫資料嘅動作
+  // （新增/打卡/超額/刪除/清除）先喺元件層彈登入閘。
+  if (!user) {
+    const guest = getGuestPreviewData();
+    return (
+      <div className="min-h-screen bg-paper">
+        <HabitTracker
+          habits={guest.habits}
+          categories={guest.categories}
+          todayEntries={guest.todayEntries}
+          totalReps={guest.totalReps}
+          repsByHabit={guest.repsByHabit}
+          firstUseDate={guest.firstUseDate}
+          initialMonthRecords={guest.monthRecords}
+          initialYear={year}
+          initialMonth={month}
+          userLabel=""
+          signOutAction={signOut}
+          isGuest
+        />
+      </div>
+    );
+  }
 
   const [habits, categories, todayEntriesMap, totalReps, repsByHabitMap, firstUseDate, monthRecordsMap] =
     await Promise.all([
@@ -55,6 +76,7 @@ export default async function AppPage() {
         initialMonth={month}
         userLabel={user.email ?? ""}
         signOutAction={signOut}
+        isGuest={false}
       />
     </div>
   );

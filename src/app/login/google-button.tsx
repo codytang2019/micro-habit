@@ -6,8 +6,14 @@ export function GoogleSignInButton() {
   const supabase = createClient();
 
   const handleGoogleSignIn = async () => {
-    const siteUrl =
-      process.env.NEXT_PUBLIC_SITE_URL ?? window.location.origin;
+    // 呢個 button 淨係喺瀏覽器行，`window.location.origin` 已經係
+    // 用戶而家實際嗰個 domain（本機 localhost:3000 / Vercel preview /
+    // production 都啱），唔應該再靠 NEXT_PUBLIC_SITE_URL —— 之前
+    // 因為 `.env.local` 個 NEXT_PUBLIC_SITE_URL 設咗做 production
+    // 網址，搞到本機測試登入完會彈去 production 個 callback，
+    // 本機收唔到 session，要撳多次先似係「得」（其實係搭正第一次
+    // 遺留低嘅狀態）。
+    const siteUrl = window.location.origin;
 
     await supabase.auth.signInWithOAuth({
       provider: "google",
@@ -21,7 +27,7 @@ export function GoogleSignInButton() {
     <button
       type="button"
       onClick={handleGoogleSignIn}
-      className="flex w-full items-center justify-center gap-3 rounded-lg border border-neutral-300 bg-white px-4 py-2.5 font-medium text-neutral-800 transition hover:bg-neutral-50"
+      className="flex w-full items-center justify-center gap-3 rounded-xl border-[1.6px] border-line bg-paper-card px-4 py-3.5 text-[14px] font-bold text-ink shadow-sm transition active:scale-[.99]"
     >
       <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
         <path
@@ -41,7 +47,7 @@ export function GoogleSignInButton() {
           d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .96 4.96l3.01 2.33C4.68 5.16 6.66 3.58 9 3.58z"
         />
       </svg>
-      Continue with Google
+      用 Google 帳號登入
     </button>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { HabitCard } from "./HabitCard";
 import { CalendarView } from "./CalendarView";
 import { MasteryView } from "./MasteryView";
@@ -23,6 +24,7 @@ export function HabitTracker({
   initialMonth,
   userLabel,
   signOutAction,
+  isGuest,
 }: {
   habits: Habit[];
   categories: Category[];
@@ -35,7 +37,9 @@ export function HabitTracker({
   initialMonth: number;
   userLabel: string;
   signOutAction: () => Promise<void>;
+  isGuest: boolean;
 }) {
+  const router = useRouter();
   const [view, setView] = useState<View>("home");
   const [preAddView, setPreAddView] = useState<View>("home");
   const [editingHabit, setEditingHabit] = useState<Habit | null>(null);
@@ -82,7 +86,16 @@ export function HabitTracker({
     return groups;
   }, [sortedHabits]);
 
+  const requireLogin = () => {
+    router.push("/login?message=" + encodeURIComponent("登入之後就可以儲存你的第一件小事"));
+  };
+
   const handleNavigateMonth = async (y: number, m: number) => {
+    if (isGuest) {
+      // demo 月曆資料淨得一個月，未登入就唔換月，直接指引去登入
+      requireLogin();
+      return;
+    }
     setYear(y);
     setMonth(m);
     setLoadingMonth(true);
@@ -98,11 +111,13 @@ export function HabitTracker({
   };
 
   const openAdd = () => {
+    if (isGuest) return requireLogin();
     setPreAddView(view);
     setEditingHabit(null);
     setView("add");
   };
   const openEdit = (h: Habit) => {
+    if (isGuest) return requireLogin();
     setPreAddView(view);
     setEditingHabit(h);
     setView("add");
@@ -110,6 +125,7 @@ export function HabitTracker({
   const closeAdd = () => setView(preAddView);
 
   const handleReset = async () => {
+    if (isGuest) return requireLogin();
     if (!confirm("確定要清除所有紀錄，重新開始嗎？呢個動作無法復原。")) return;
     await resetAllData();
     window.location.reload();
@@ -131,16 +147,39 @@ export function HabitTracker({
             </div>
             <div className="my-1.5 flex items-center justify-between">
               <div className="font-serif text-[34px] font-black tracking-wide">1%習慣</div>
-              <form action={signOutAction}>
-                <button type="submit" className="text-xs text-ink-soft underline">
-                  登出
+              {isGuest ? (
+                <button
+                  type="button"
+                  onClick={requireLogin}
+                  className="text-xs font-bold text-stamp underline"
+                >
+                  登入
                 </button>
-              </form>
+              ) : (
+                <form action={signOutAction}>
+                  <button type="submit" className="text-xs text-ink-soft underline">
+                    登出
+                  </button>
+                </form>
+              )}
             </div>
+            {isGuest && (
+              <div className="mb-3.5 flex items-center gap-2 rounded-xl border border-dashed border-stamp/50 bg-stamp/5 px-3 py-2.5 text-[11.5px] text-ink-soft">
+                <span className="flex-none">👀</span>
+                <span>
+                  你而家睇緊 <b className="text-ink">預覽模式</b>，資料唔會儲存。
+                  <button type="button" onClick={requireLogin} className="ml-1 font-bold text-stamp underline">
+                    登入
+                  </button>{" "}
+                  先可以開始記錄自己嘅小事。
+                </span>
+              </div>
+            )}
             <p className="mb-[18px] text-[13px] leading-relaxed text-ink-soft">
               每天進步 1%，一年強大 37 倍。
               <br />
-              <b className="text-ink">小到不可能失敗</b>，才能持續累積。 · {userLabel}
+              <b className="text-ink">小到不可能失敗</b>，才能持續累積。
+              {!isGuest && userLabel ? ` · ${userLabel}` : ""}
             </p>
 
             <div className="mb-4 flex gap-2.5">
@@ -203,6 +242,8 @@ export function HabitTracker({
                     entry={todayEntries[h.id]}
                     category={h.categoryId ? catById.get(h.categoryId) : undefined}
                     onEdit={openEdit}
+                    isGuest={isGuest}
+                    onRequireLogin={requireLogin}
                   />
                 ))}
               </div>
@@ -303,6 +344,24 @@ export function HabitTracker({
               </svg>
               已成為習慣
             </button>
+            {isGuest && (
+              <button
+                type="button"
+                onClick={requireLogin}
+                className="flex flex-1 flex-col items-center gap-0.5 rounded-3xl px-1 py-1.5 text-[9.5px] text-stamp"
+              >
+                <svg viewBox="0 0 24 24" width="19" height="19" fill="none">
+                  <path
+                    d="M15 17l5-5-5-5M20 12H9M12 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h6"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <span className="font-bold">登入</span>
+              </button>
+            )}
           </div>
           <button
             type="button"
